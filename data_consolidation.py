@@ -77,11 +77,8 @@ GAIA_FILL_MAP = {
 
 # Metadata columns to drop from final output
 DROP_COLS_PATTERNS = [
-    "rowupdate", "pl_pubdate", "releasedate", "rv_flag", "pul_flag",
-    "ptv_flag", "tran_flag", "ast_flag", "obm_flag", "micro_flag",
-    "etv_flag", "ima_flag", "dkin_flag",
+    "rowupdate", "pl_pubdate", "releasedate", "*_lim", "*_flag",
 ]
-
 
 # ---------------------------------------------------------------------------
 # Helpers
