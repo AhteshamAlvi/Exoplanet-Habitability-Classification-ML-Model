@@ -48,7 +48,8 @@ from imblearn.over_sampling import SMOTE
 from imblearn.under_sampling import RandomUnderSampler, TomekLinks
 from imblearn.pipeline import Pipeline as ImbPipeline
 
-FIG_DIR = Path("report/figures")
+PROJECT_ROOT = Path(__file__).parent
+FIG_DIR = PROJECT_ROOT / "report" / "figures"
 FIG_DIR.mkdir(parents=True, exist_ok=True)  # creates folder if missing
 
 def save_plot(name):
