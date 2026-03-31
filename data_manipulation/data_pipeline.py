@@ -6,7 +6,7 @@ Returns train/test sets ready for modeling.
 from dependencies import *
 
 # ── Constants ──
-DATA_PATH = Path(__file__).parent / "data" / "consolidated_exoplanets.csv"
+DATA_PATH = Path(__file__).parent.parent / "data" / "consolidated_exoplanets.csv"
 TARGET = "P_HABITABLE"
 RANDOM_STATE = 42
 

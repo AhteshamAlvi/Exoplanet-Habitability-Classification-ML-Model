@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-DATA_DIR = Path("data")
+DATA_DIR = Path(__file__).parent.parent / "data"
 NASA_TAP_URL = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
 GAIA_TAP_URL = "https://gea.esac.esa.int/tap-server/tap/sync"
 SIMBAD_TAP_URL = "https://simbad.cds.unistra.fr/simbad/sim-tap/sync"
