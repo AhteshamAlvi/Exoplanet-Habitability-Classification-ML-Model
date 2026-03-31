@@ -13,6 +13,11 @@ pandas
 numpy
 requests
 astroquery
+scikit-learn
+xgboost
+imbalanced-learn
+matplotlib
+scipy
 ```
 
 ---
@@ -21,14 +26,26 @@ astroquery
 
 ```
 exoplanet_ML_classification/
-  data_consolidation.py          # Multi-source data pipeline
-  ml_build.ipynb                 # ML model notebook (in development)
-  data/
-    hwc.csv                      # HEC source data (pre-downloaded)
-    nasa_ps.csv                  # NASA PS cache (generated)
-    gaia_stellar.csv             # Gaia DR3 cache (generated)
-    simbad_stellar.csv           # SIMBAD cache (generated)
-    consolidated_exoplanets.csv  # Final consolidated dataset (generated)
+├── dependencies.py                # Centralized imports for all modules & notebooks
+├── data_manipulation/
+│   ├── data_consolidation.py      # Multi-source data pipeline (4 catalogs → 1 CSV)
+│   └── data_pipeline.py           # Cleaning, imputation, splitting, balancing
+├── basic_models/
+│   ├── GNB.ipynb                  # Gaussian Naïve Bayes (baseline)
+│   ├── LDA.ipynb                  # Linear Discriminant Analysis
+│   └── SVM.ipynb                  # Support Vector Machine (linear kernel)
+├── advanced_models/
+│   └── MLP.ipynb                  # Multi-Layer Perceptron
+├── data/
+│   ├── consolidated_exoplanets.csv  # Final dataset (generated)
+│   ├── hwc.csv                      # HEC source data (pre-downloaded)
+│   ├── nasa_ps.csv                  # NASA PS cache (generated)
+│   ├── gaia_stellar.csv             # Gaia DR3 cache (generated)
+│   └── simbad_stellar.csv           # SIMBAD cache (generated)
+└── report/
+    ├── paper.tex                    # LaTeX manuscript
+    ├── figures/                     # Generated model visualizations
+    └── Literature/                  # Reference papers
 ```
 
 ---
@@ -80,7 +97,7 @@ Fills remaining gaps, primarily spectral type classifications. SIMBAD is the ref
 
 ## Pipeline Overview
 
-`data_consolidation.py` executes a six-step pipeline:
+`data_manipulation/data_consolidation.py` executes a six-step pipeline:
 
 1. **Download NASA PS Table** -- TAP query for all confirmed planets with `default_flag=1`, cached to `data/nasa_ps.csv`
 2. **Load & Merge HEC** -- Left-join habitability labels and derived properties onto NASA base using normalized planet names (90.5% match rate)
@@ -93,7 +110,7 @@ Fills remaining gaps, primarily spectral type classifications. SIMBAD is the ref
 
 ## Results
 
-`data_consolidation.py` produces `data/consolidated_exoplanets.csv` with:
+`data_manipulation/data_consolidation.py` produces `data/consolidated_exoplanets.csv` with:
 
 - **6,153 planets** (all confirmed from NASA) x **398 features**
 - **90.5% HEC match rate** -- 5,569 planets have habitability labels
@@ -130,17 +147,20 @@ Note: `pl_eqt` improves in the final column because additional `st_lum` values f
 ## Usage
 
 ```bash
-python data_consolidation.py              # uses caches
-python data_consolidation.py --force-refresh  # re-downloads everything
+# Data consolidation (4 catalogs → 1 CSV)
+python data_manipulation/data_consolidation.py              # uses caches
+python data_manipulation/data_consolidation.py --force-refresh  # re-downloads everything
 ```
 
-On first run, the script downloads from all remote sources (~2 minutes). Subsequent runs use cached intermediate files (`data/nasa_ps.csv`, `data/gaia_stellar.csv`, `data/simbad_stellar.csv`) and complete in seconds.
+On first run, the consolidation script downloads from all remote sources (~2 minutes). Subsequent runs use cached intermediate files (`data/nasa_ps.csv`, `data/gaia_stellar.csv`, `data/simbad_stellar.csv`) and complete in seconds.
+
+The ML pipeline (cleaning, imputation, balancing) runs automatically when any model notebook is opened. Each notebook calls `load_pipeline()` from `data_manipulation/data_pipeline.py`, which returns balanced training data and scaled test data ready for modeling.
 
 ---
 
 ## Data Cleaning & Imputation
 
-After consolidation, the dataset contains 408 columns across 6,153 planets. Before model training, the ML notebook (`ml_build.ipynb`) performs a multi-stage cleaning and imputation pipeline. The choice of imputation method matters significantly: as Alam et al. (2023) demonstrate, the technique used to handle missing values directly impacts both clustering quality and downstream classification accuracy, with decision tree-based and *k*-NN methods consistently outperforming naive statistical fills across multiple benchmark datasets.
+After consolidation, the dataset contains 408 columns across 6,153 planets. Before model training, `data_manipulation/data_pipeline.py` performs a multi-stage cleaning and imputation pipeline. The choice of imputation method matters significantly: as Alam et al. (2023) demonstrate, the technique used to handle missing values directly impacts both clustering quality and downstream classification accuracy, with decision tree-based and *k*-NN methods consistently outperforming naive statistical fills across multiple benchmark datasets.
 
 ### Step 1 -- Feature Selection
 
@@ -149,7 +169,7 @@ The 408 raw columns are reduced to 17 ML-relevant features. Columns are dropped 
 - **Identifiers and metadata**: planet/star names, reference strings, discovery provenance, coordinate strings, flag columns -- these carry no predictive signal for habitability.
 - **Error and string columns**: measurement uncertainties (`*err1`, `*err2`), limit flags (`*lim`), and string representations (`*str`) are auxiliary to the measurements themselves.
 
-The surviving 19 features span three domains:
+The initial 19 features span three domains:
 
 | Domain | Features |
 |--------|----------|
@@ -158,7 +178,7 @@ The surviving 19 features span three domains:
 | Derived | `P_GRAVITY`, `P_DENSITY`, `P_ESCAPE` |
 | System | `sy_dist` |
 
-Features that are direct habitability proxies (`P_ESI`, `in_habitable_zone`) are explicitly excluded to prevent data leakage.
+Features that are direct habitability proxies (`P_ESI`, `in_habitable_zone`) are explicitly excluded to prevent data leakage. After Tier 1 drops (see below), 17 features remain for modeling.
 
 ### Step 2 -- Target Filtering
 
@@ -238,11 +258,56 @@ Thus the final 17 features going into modeling are:
 | System | `sy_dist` |
 
 
+## Data Balancing
+
+The habitability label distribution is severely imbalanced (5,499 non-habitable vs. 29 mesoplanets vs. 41 psychroplanets). After an 80/20 stratified train/test split, the training set is balanced using a three-stage pipeline from `imbalanced-learn`:
+
+1. **Random undersampling** -- reduce the non-habitable class from ~4,400 to 300 samples
+2. **SMOTE** -- oversample mesoplanet and psychroplanet classes to 200 samples each via synthetic minority oversampling (Chawla et al., 2002)
+3. **Tomek link removal** -- clean noisy decision boundaries by removing ambiguous sample pairs
+
+This hybrid approach follows the strategy used by Basak et al. (2021), who applied KDE-based oversampling combined with artificial undersampling on the same PHL-EC dataset. Additionally, `class_weight='balanced'` is passed to classifiers that support it, further penalizing minority-class misclassification.
+
+The test set is **not** resampled and retains the original class distribution, ensuring evaluation reflects real-world performance.
+
+---
+
+## Models
+
+All models are trained on the balanced training set and evaluated on the original-distribution test set. Each model notebook includes hyperparameter tuning via `GridSearchCV` with 5-fold cross-validation scored on F1 macro.
+
+### Basic Models (`basic_models/`)
+
+| Model | Notebook | Key Hyperparameters | Diagnostic Plots |
+|-------|----------|--------------------|--------------------|
+| **Gaussian Naive Bayes** | `GNB.ipynb` | `var_smoothing` (log-spaced grid) | Class-conditional Gaussians, posterior probability distributions |
+| **Linear Discriminant Analysis** | `LDA.ipynb` | `solver` (svd/lsqr/eigen), `shrinkage` | Discriminant space projections, feature weights per LD axis, class distributions along LD axes |
+| **Support Vector Machine (Linear)** | `SVM.ipynb` | `C` (regularization) | Hyperplane weights per class pair, decision function margins, support vector density |
+
+### Advanced Models (`advanced_models/`)
+
+| Model | Notebook |
+|-------|----------|
+| **Multi-Layer Perceptron** | `MLP.ipynb` |
+
+### Evaluation Metrics
+
+Each model reports:
+- **F1 macro** -- primary metric, treats all 3 classes equally regardless of size
+- **F1 weighted** -- accounts for class sizes in the test set
+- **Per-class precision, recall, and F1** via classification report
+- **Confusion matrices** -- raw counts and row-normalized (per-class recall percentages)
+- **5-fold cross-validation** on the balanced training set for stability assessment
+
+---
+
 ## References
 
 Alam, S., Ayub, M. S., Arora, S., & Khan, M. A. (2023). An investigation of the imputation techniques for missing values in ordinal data enhancing clustering and classification analysis validity. *Decision Analytics Journal*, 9, 100341. DOI: [10.1016/j.dajour.2023.100341](https://doi.org/10.1016/j.dajour.2023.100341)
 
 Basak, S., Mathur, A., Theophilus, A. J., Deshpande, G., & Murthy, J. (2021). Habitability classification of exoplanets: a machine learning insight. *The European Physical Journal Special Topics*, 230, 2221-2251. DOI: [10.1140/epjs/s11734-021-00203-z](https://doi.org/10.1140/epjs/s11734-021-00203-z)
+
+Chawla, N. V., Bowyer, K. W., Hall, L. O., & Kegelmeyer, W. P. (2002). SMOTE: Synthetic Minority Over-sampling Technique. *Journal of Artificial Intelligence Research*, 16, 321-357. DOI: [10.1613/jair.953](https://doi.org/10.1613/jair.953)
 
 Chen, J., & Kipping, D. (2017). Probabilistic forecasting of the masses and radii of other worlds. *The Astrophysical Journal*, 834(1), 17. DOI: [10.3847/1538-4357/834/1/17](https://doi.org/10.3847/1538-4357/834/1/17)
 
