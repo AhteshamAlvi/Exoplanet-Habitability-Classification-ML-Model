@@ -15,7 +15,8 @@ from scipy.stats import norm
 
 # ── Sklearn: Preprocessing ──
 from sklearn.experimental import enable_iterative_imputer  # noqa: must come before IterativeImputer
-from sklearn.preprocessing import StandardScaler, label_binarize
+from sklearn.preprocessing import StandardScaler, RobustScaler, label_binarize
+from sklearn.decomposition import PCA
 from sklearn.impute import IterativeImputer, KNNImputer
 
 # ── Sklearn: Model Selection ──
@@ -31,7 +32,7 @@ from sklearn.metrics import (
 
 # ── Sklearn: Models ──
 from sklearn.naive_bayes import GaussianNB
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
@@ -44,11 +45,11 @@ from sklearn.utils.class_weight import compute_class_weight
 from xgboost import XGBClassifier
 
 # ── Imbalanced-learn ──
-from imblearn.over_sampling import SMOTE
+from imblearn.over_sampling import SMOTE, BorderlineSMOTE
 from imblearn.under_sampling import RandomUnderSampler, TomekLinks
 from imblearn.pipeline import Pipeline as ImbPipeline
 
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).parent.parent
 FIG_DIR = PROJECT_ROOT / "report" / "figures"
 FIG_DIR.mkdir(parents=True, exist_ok=True)  # creates folder if missing
 

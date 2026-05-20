@@ -1,9 +1,10 @@
 """
-data_pipeline.py — Exoplanet ML Classification
-Loads consolidated_exoplanets.csv, cleans, imputes, splits, balances.
-Returns train/test sets ready for modeling.
+data_manipulation.py — Exoplanet ML Classification
+Loads consolidated_exoplanets.csv, cleans, imputes, splits, and balances.
+Call the three step functions directly from model notebooks so model-specific
+preprocessing can be inserted between imputation and splitting.
 """
-from dependencies import *
+from .dependencies import *
 
 # ── Constants ──
 DATA_PATH = Path(__file__).parent.parent / "data" / "consolidated_exoplanets.csv"
@@ -33,7 +34,7 @@ FEATURES = [
 ]
 
 
-def _load_and_filter(verbose=True):
+def load_and_filter(verbose=True):
     """Load CSV, keep relevant columns, drop rows without target."""
     df = pd.read_csv(DATA_PATH, low_memory=False)
     df = df[BASEFEATURES + [TARGET]].copy()
@@ -49,7 +50,7 @@ def _load_and_filter(verbose=True):
     return df
 
 
-def _impute(df, verbose=True):
+def impute(df, verbose=True):
     """Multi-tier imputation pipeline."""
 
     # ── Tier 2: Physics-based imputation ──
@@ -192,9 +193,23 @@ def _impute(df, verbose=True):
     return df
 
 
-def _split_and_balance(df, test_size=0.2, majority_target=300, minority_target=200, verbose=True):
-    """Split, scale, and balance the dataset."""
-    X = df[FEATURES].copy()
+def split_and_balance(df, features=None, scaler=None, smote_variant="standard",
+                      test_size=0.2, majority_target=300, minority_target=200, verbose=True):
+    """Split, scale, and balance the dataset.
+
+    Parameters
+    ----------
+    features : list, optional
+        Feature columns to use. Defaults to the global FEATURES list.
+    scaler : sklearn scaler instance, optional
+        Defaults to StandardScaler(). Pass RobustScaler() for SVM.
+    smote_variant : {"standard", "borderline"}
+        Which SMOTE variant to use for minority oversampling.
+    """
+    cols = features if features is not None else FEATURES
+    scaler_obj = scaler if scaler is not None else StandardScaler()
+
+    X = df[cols].copy()
     y = df[TARGET].copy()
 
     X_train, X_test, y_train, y_test = train_test_split(
@@ -208,23 +223,23 @@ def _split_and_balance(df, test_size=0.2, majority_target=300, minority_target=2
         print(y_train.value_counts().sort_index())
 
     # Scale
-    scaler = StandardScaler()
     X_train_scaled = pd.DataFrame(
-        scaler.fit_transform(X_train), columns=FEATURES, index=X_train.index
+        scaler_obj.fit_transform(X_train), columns=cols, index=X_train.index
     )
     X_test_scaled = pd.DataFrame(
-        scaler.transform(X_test), columns=FEATURES, index=X_test.index
+        scaler_obj.transform(X_test), columns=cols, index=X_test.index
     )
 
     # Balance
     min_class_count = y_train.value_counts().min()
     k_neighbors = min(5, min_class_count - 1)
 
+    smote_cls = BorderlineSMOTE if smote_variant == "borderline" else SMOTE
     sampler = ImbPipeline([
         ("under", RandomUnderSampler(
             sampling_strategy={0.0: majority_target}, random_state=RANDOM_STATE
         )),
-        ("smote", SMOTE(
+        ("smote", smote_cls(
             sampling_strategy={1.0: minority_target, 2.0: minority_target},
             k_neighbors=k_neighbors, random_state=RANDOM_STATE,
         )),
@@ -252,28 +267,13 @@ def _split_and_balance(df, test_size=0.2, majority_target=300, minority_target=2
         print(f"  y_test            → {len(y_test)} samples (original distribution)")
         print(f"  class_weight_dict → for class_weight param in classifiers")
 
-    return X_train_bal, y_train_bal, X_test_scaled, y_test, class_weight_dict, scaler
-
-
-def load_pipeline(verbose=True):
-    """
-    Run the full pipeline: load → clean → impute → split → balance.
-
-    Returns:
-        X_train_bal, y_train_bal, X_test_scaled, y_test,
-        class_weight_dict, FEATURES, scaler
-    """
-    df = _load_and_filter(verbose=verbose)
-    df = _impute(df, verbose=verbose)
-    X_train_bal, y_train_bal, X_test_scaled, y_test, class_weight_dict, scaler = (
-        _split_and_balance(df, verbose=verbose)
-    )
-    return X_train_bal, y_train_bal, X_test_scaled, y_test, class_weight_dict, FEATURES, scaler
+    return X_train_bal, y_train_bal, X_test_scaled, y_test, class_weight_dict, scaler_obj
 
 
 if __name__ == "__main__":
-    # Run standalone to verify pipeline
-    X_train_bal, y_train_bal, X_test_scaled, y_test, class_weight_dict, features, scaler = (
-        load_pipeline(verbose=True)
+    df = load_and_filter(verbose=True)
+    df = impute(df, verbose=True)
+    X_train_bal, y_train_bal, X_test_scaled, y_test, class_weight_dict, scaler = (
+        split_and_balance(df, verbose=True)
     )
     print("\nPipeline complete. All outputs verified.")
