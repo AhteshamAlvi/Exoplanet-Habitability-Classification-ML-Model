@@ -335,42 +335,41 @@ Each model reports:
 
 ## Results
 
-The table below is the leaderboard pulled from each model notebook's stored outputs, sorted by test-set F1 macro. Because the minority test classes are tiny (6 mesoplanet, 8 psychroplanet samples), macro-F1 is highly sensitive to single misclassifications -- one wrong call on a mesoplanet sample costs ~0.05 macro-F1 points.
+The table below is the leaderboard pulled from each model notebook's stored outputs, sorted by test-set F1 macro. All numbers reflect the corrected pipeline in which Tier 3--7 imputers are fitted on the training split only (see [Data Cleaning & Imputation](#data-cleaning--imputation)). Because the minority test classes are tiny (6 mesoplanet, 8 psychroplanet samples), macro-F1 is highly sensitive to single misclassifications -- one wrong call on a mesoplanet sample costs ~0.05 macro-F1 points, so DTree's number is reported as the mean across a 5-seed sweep rather than a single split (see [DTree: seed-sweep methodology](#decision-tree-seed-sweep-methodology) below).
 
 | Rank | Model | F1 Macro (test) | F1 Weighted | 5-Fold CV F1 Macro | Notes |
 |------|-------|-----------------|-------------|---------------------|-------|
-| 1 | Decision Tree | **0.8776** | 0.9938 | 0.9693 ± 0.0228 | depth=5, 11 leaves -- see caveat below |
-| 2 | XGBoost | 0.7721 | 0.9901 | 0.9825 ± 0.0126 | `n_estimators=46` (early stop) |
-| 3 | Random Forest | 0.7479 | 0.9887 | 0.9883 ± 0.0126 | `n_estimators=90` (OOB) |
-| 4 | RBF SVM | 0.7158 | 0.9845 | 0.9844 ± 0.0052 | 203/696 support vectors |
-| 5 | Extra Trees | 0.7086 | 0.9857 | 0.9817 ± 0.0105 | `n_estimators=90` (OOB) |
-| 6 | Linear SVM | 0.6560 | 0.9750 | 0.9594 ± 0.0273 | |
-| 7 | MLP | 0.6302 | 0.9797 | 0.8819 ± 0.0597 | high CV std vs. peers |
-| 8 | Gaussian Naïve Bayes | 0.6236 | 0.9769 | 0.8852 ± 0.0318 | log1p-transformed features |
-| 9 | QDA | 0.6196 | 0.9776 | 0.9727 ± 0.0056 | |
-| 10 | Logistic Regression | 0.6182 | 0.9760 | 0.9427 ± 0.0103 | L1 penalty |
-| 11 | KNN | 0.4548 | 0.9468 | 0.9455 ± 0.0090 | `k=3`, distance-weighted |
-| 12 | LDA | 0.4323 | 0.9326 | 0.8250 ± 0.0352 | |
+| 1 | XGBoost | **0.7721** | 0.9901 | 0.9826 ± 0.0098 | `n_estimators=46` (early stop) |
+| 2 | Random Forest | 0.7410 | 0.9881 | 0.9895 ± 0.0111 | `n_estimators=90` (OOB) |
+| 3 | Decision Tree | 0.7403 ± 0.0960 | 0.9863 (mean) | 0.9693 ± 0.0228 | mean over 5 split seeds (see below) |
+| 4 | Extra Trees | 0.6988 | 0.9846 | 0.9859 ± 0.0065 | `n_estimators=90` (OOB) |
+| 5 | Linear SVM | 0.6679 | 0.9816 | 0.9693 ± 0.0179 | |
+| 6 | RBF SVM | 0.6345 | 0.9793 | 0.9789 ± 0.0098 | 203/696 support vectors |
+| 7 | Gaussian Naïve Bayes | 0.6268 | 0.9764 | 0.8853 ± 0.0140 | log1p-transformed features |
+| 8 | MLP | 0.6222 | 0.9796 | 0.8811 ± 0.0457 | high CV std vs. peers |
+| 9 | QDA | 0.6149 | 0.9766 | 0.9713 ± 0.0046 | |
+| 10 | Logistic Regression | 0.5868 | 0.9722 | 0.9357 ± 0.0105 | L1 penalty |
+| 11 | LDA | 0.4311 | 0.9316 | 0.8206 ± 0.0308 | |
+| 12 | KNN | 0.4304 | 0.9464 | 0.9353 ± 0.0147 | `k=3`, distance-weighted |
 
 ### CV-to-test gap
 
 Cross-validation runs on the **balanced** training set (~698 samples evenly split across 3 classes), while the test set is the **original imbalanced** distribution (98.7% non-habitable). The CV-to-test gap is therefore expected and reflects the difference in evaluation regimes, not overfitting per se. All models show the same pattern; the gap should not be read as a stability problem on its own.
 
-### Caveat: Decision Tree at rank 1
+### Decision Tree: seed-sweep methodology
 
-A single Decision Tree placing ahead of every ensemble (Random Forest, Extra Trees, XGBoost) and the RBF SVM by 10+ macro-F1 points is not theoretically expected -- ensembles exist precisely to reduce the high variance of single trees. Inspecting the per-class breakdown explains the gap:
+An initial run of the Decision Tree at `random_state=42` produced an F1 macro of **0.8776**, which would have placed it ahead of every ensemble (Random Forest, Extra Trees, XGBoost) and the RBF SVM by 10+ macro-F1 points. That ranking is theoretically suspicious -- ensembles exist precisely to reduce single-tree variance, so a single tree beating its bagged counterparts is a flag for a lucky split rather than a genuine result. A 5-seed sweep using the same tuned hyperparameters (`max_depth=5`, `min_samples_leaf=1`, `criterion=entropy`) confirms this:
 
-| Class | DTree F1 | XGB F1 | RF F1 |
-|-------|----------|--------|-------|
-| Non-habitable (n=1100) | 0.9964 | 0.9945 | 0.9936 |
-| Mesoplanet (n=6) | **1.0000** | 0.8000 | 0.7500 |
-| Psychroplanet (n=8) | **0.6364** | 0.5217 | 0.5000 |
+| seed | F1 macro | mesoplanet F1 | psychroplanet F1 |
+|------|----------|---------------|------------------|
+| 0 | 0.6102 | 0.5000 | 0.3429 |
+| 7 | 0.7403 | 0.8000 | 0.4286 |
+| 21 | 0.7136 | 0.6316 | 0.5185 |
+| 42 | 0.8776 | 1.0000 | 0.6364 |
+| 99 | 0.7597 | 0.8571 | 0.4324 |
+| **mean** | **0.7403 ± 0.0960** | — | — |
 
-The DTree happened to perfectly classify all 6 mesoplanet test samples; the ensembles each misclassified one or more. With only 6 samples, the difference between F1=1.0 and F1=0.75-0.80 on a single class is the difference between rank 1 and rank 5 on macro-F1. The DTree's CV-to-test gap (0.97 → 0.88) is smaller than the ensembles' (e.g., RF 0.99 → 0.75), but on a 14-sample minority that is consistent with a single lucky split, not robust superiority. A seed-sweep sanity check across multiple `random_state` values for the train/test split is the appropriate next step before reporting the DTree as the headline result.
-
-### Implementation note on leakage
-
-These results were produced before the imputation pipeline was refactored to fit Tier 3--7 imputers on the training split only (see [Data Cleaning & Imputation](#data-cleaning--imputation)). The previous version fit `IterativeImputer`, `KNNImputer`, and group medians on the full dataframe before splitting, allowing a mild form of test-set distributional leakage. The leakage affected all twelve models uniformly, so relative rankings are unlikely to change materially, but absolute F1 numbers will shift slightly when the notebooks are re-run on the corrected pipeline.
+Perfect mesoplanet classification occurred in only 1/5 seeds, and `seed=42` is the maximum of the five — a clear positive outlier. The seed-averaged macro-F1 (0.7403) places the DTree between Random Forest and Extra Trees, exactly where a single high-variance tree should sit relative to its bagged ensembles. The leaderboard above uses the seed-averaged number for DTree; all other models report their `seed=42` score because their hyperparameter tuning and CV grids were run under that single split. A full seed-sweep across every model would be the next methodological step before publication.
 
 ---
 
