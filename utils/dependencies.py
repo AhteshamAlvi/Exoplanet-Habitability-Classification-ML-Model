@@ -30,15 +30,26 @@ from sklearn.metrics import (
     roc_curve, auc, ConfusionMatrixDisplay,
 )
 
-# ── Sklearn: Models ──
-from sklearn.naive_bayes import GaussianNB
+# ── Sklearn: Models — Linear & Discriminant ──
+from sklearn.linear_model import LogisticRegression, BayesianRidge
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
 from sklearn.svm import SVC
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+
+# ── Sklearn: Models — Probabilistic ──
+from sklearn.naive_bayes import GaussianNB
+
+# ── Sklearn: Models — Neighbours ──
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.linear_model import BayesianRidge
+
+# ── Sklearn: Models — Trees & Ensembles ──
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.tree import plot_tree
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, ExtraTreesClassifier
+
+# ── Sklearn: Models — Neural Networks ──
 from sklearn.neural_network import MLPClassifier
+
+# ── Sklearn: Utilities ──
 from sklearn.utils.class_weight import compute_class_weight
 
 # ── XGBoost ──
