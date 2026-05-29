@@ -1,52 +1,25 @@
+"""
+plots.py — Visualisation helpers for the exoplanet ML pipeline.
+
+The headline per-class F1 visualisation in the new Metrics section is
+`plot_sweep_f1_bar` (mean ± std error bars from the seed sweep). The other
+helpers diagnose a single split (seed=42) where concreteness beats averaging:
+confusion matrices and posterior probability distributions.
+"""
 import numpy as np
 import matplotlib.pyplot as plt
-from pathlib import Path
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
 from .constants import get_class_meta
-from .evaluation import compute_f1_scores
-
-_FIG_DIR = Path(__file__).parent.parent / "report" / "figures"
-_FIG_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _save(name):
-    plt.savefig(_FIG_DIR / f"{name}.png", dpi=150, bbox_inches="tight")
-
-
-def plot_f1_bar(y_test, y_pred, model_name):
-    """Bar chart of per-class F1 with macro and weighted reference lines."""
-    class_names, _, colors = get_class_meta()
-    f1_macro, f1_weighted, f1_per_class = compute_f1_scores(y_test, y_pred)
-
-    fig, ax = plt.subplots(figsize=(10, 5))
-    x_pos = np.arange(len(class_names))
-    bars = ax.bar(x_pos, f1_per_class, color=colors, edgecolor="black", linewidth=0.8, width=0.5)
-
-    for bar, score in zip(bars, f1_per_class):
-        ax.text(
-            bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
-            f"{score:.3f}", ha="center", va="bottom", fontsize=12, fontweight="bold",
-        )
-
-    ax.axhline(f1_macro, color="gray", ls="--", lw=1.5, label=f"Macro Avg = {f1_macro:.3f}")
-    ax.axhline(f1_weighted, color="gray", ls=":", lw=1.5, label=f"Weighted Avg = {f1_weighted:.3f}")
-    ax.set_xticks(x_pos)
-    ax.set_xticklabels(class_names, fontsize=11)
-    ax.set_ylabel("F1 Score", fontsize=12)
-    ax.set_ylim(0, 1.1)
-    ax.set_title(f"{model_name} — Per-Class F1 Scores", fontsize=14, fontweight="bold")
-    ax.legend(fontsize=10)
-    plt.tight_layout()
-    _save(f"{model_name.lower().replace(' ', '_')}_f1_scores")
-    plt.show()
+from .dependencies import save_plot
 
 
 def plot_confusion_matrices(y_test, y_pred, model_name):
     """Side-by-side raw counts and row-normalised confusion matrices.
 
     Rows are ordered Psychroplanet → Mesoplanet → Non-Habitable (rarest first)
-    so that habitable classes sit at the top for easier reading.
+    so the habitable classes sit at the top for easier reading. Reports a
+    single split (seed=42) — averaged CMs are fractional and harder to read.
     """
     class_names, classes, _ = get_class_meta()
     cm = confusion_matrix(y_test, y_pred, labels=classes)
@@ -74,15 +47,16 @@ def plot_confusion_matrices(y_test, y_pred, model_name):
 
     fig.suptitle(f"{model_name} — Confusion Matrices", fontsize=14, fontweight="bold", y=1.02)
     plt.tight_layout()
-    _save(f"{model_name.lower().replace(' ', '_')}_confusion_matrix")
+    save_plot(f"{model_name.lower().replace(' ', '_')}_confusion_matrix")
     plt.show()
 
 
 def plot_posterior_violins(y_test, y_prob, model_name):
-    """Violin + jitter plot of predicted class probabilities broken out by true class.
+    """Violin + jitter plot of predicted class probabilities, by true class.
 
-    Only applicable to models that expose predict_proba. When a true class has ≤50
-    samples the individual points are also scatter-plotted over the violin.
+    Only applicable to models that expose predict_proba (GNB, LogReg, QDA, MLP).
+    When a true class has ≤50 samples the individual points are also
+    scatter-plotted over the violin.
     """
     class_names, _, colors = get_class_meta()
     y_test_arr = y_test.values if hasattr(y_test, "values") else np.asarray(y_test)
@@ -137,5 +111,48 @@ def plot_posterior_violins(y_test, y_prob, model_name):
         fontsize=14, fontweight="bold", y=1.02,
     )
     plt.tight_layout()
-    _save(f"{model_name.lower().replace(' ', '_')}_posteriors")
+    save_plot(f"{model_name.lower().replace(' ', '_')}_posteriors")
+    plt.show()
+
+
+def plot_sweep_f1_bar(sweep_df, model_name):
+    """Per-class F1 bar chart with error bars from a seed sweep.
+
+    Sweep-aware replacement for the single-seed plot_f1_bar — the error bars
+    are what makes this useful, since per-class F1 variance is high when
+    minority test classes are tiny (6 meso, 8 psychro samples).
+    """
+    class_names, _, colors = get_class_meta()
+    col_for = {"Non-Habitable": "f1_nonhab",
+               "Mesoplanet":    "f1_meso",
+               "Psychroplanet": "f1_psychro"}
+    means = [sweep_df[col_for[c]].mean() for c in class_names]
+    stds  = [sweep_df[col_for[c]].std()  for c in class_names]
+    macro_mean = sweep_df["f1_macro"].mean()
+    macro_std  = sweep_df["f1_macro"].std()
+    weighted_mean = sweep_df["f1_weighted"].mean()
+    n = len(sweep_df)
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    x_pos = np.arange(len(class_names))
+    bars = ax.bar(x_pos, means, yerr=stds, color=colors, edgecolor="black",
+                  linewidth=0.8, width=0.5, capsize=6, error_kw={"lw": 1.5})
+    for bar, m, s in zip(bars, means, stds):
+        ax.text(bar.get_x() + bar.get_width() / 2, m + s + 0.02,
+                f"{m:.3f}±{s:.3f}", ha="center", va="bottom",
+                fontsize=11, fontweight="bold")
+
+    ax.axhline(macro_mean, color="gray", ls="--", lw=1.5,
+               label=f"Macro avg = {macro_mean:.3f} ± {macro_std:.3f}")
+    ax.axhline(weighted_mean, color="gray", ls=":", lw=1.5,
+               label=f"Weighted avg = {weighted_mean:.3f}")
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(class_names, fontsize=11)
+    ax.set_ylabel("F1 Score", fontsize=12)
+    ax.set_ylim(0, 1.15)
+    ax.set_title(f"{model_name} — Per-Class F1 ({n}-seed sweep, mean ± std)",
+                 fontsize=14, fontweight="bold")
+    ax.legend(fontsize=10)
+    plt.tight_layout()
+    save_plot(f"{model_name.lower().replace(' ', '_')}_f1_scores_sweep")
     plt.show()
