@@ -62,7 +62,10 @@ from imblearn.pipeline import Pipeline as ImbPipeline
 
 PROJECT_ROOT = Path(__file__).parent.parent
 FIG_DIR = PROJECT_ROOT / "report" / "figures"
-FIG_DIR.mkdir(parents=True, exist_ok=True)  # creates folder if missing
+SWEEP_DIR = PROJECT_ROOT / "data" / "output" / "seed_sweep_results"
+FIG_DIR.mkdir(parents=True, exist_ok=True)
+SWEEP_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def save_plot(name):
     plt.savefig(FIG_DIR / f"{name}.png", dpi=150, bbox_inches="tight")

@@ -7,7 +7,7 @@ preprocessing can be inserted between imputation and splitting.
 from .dependencies import *
 
 # ── Constants ──
-DATA_PATH = Path(__file__).parent.parent / "data" / "consolidated_exoplanets.csv"
+DATA_PATH = Path(__file__).parent.parent / "data" / "input" / "consolidated_exoplanets.csv"
 TARGET = "P_HABITABLE"
 RANDOM_STATE = 42
 

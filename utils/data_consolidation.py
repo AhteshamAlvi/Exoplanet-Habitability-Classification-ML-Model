@@ -7,7 +7,7 @@ Merges data from:
   3. Gaia DR3                              — fills missing stellar parameters
   4. SIMBAD                                — fills spectral type & remaining gaps
 
-Output: data/consolidated_exoplanets.csv
+Output: data/input/consolidated_exoplanets.csv
 """
 
 import argparse
@@ -32,15 +32,21 @@ log = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 DATA_DIR = Path(__file__).parent.parent / "data"
+INPUT_DIR = DATA_DIR / "input"
+RAW_DIR = INPUT_DIR / "raw"
+
+# Ensure the directories exist so first-run downloads work on a fresh checkout.
+RAW_DIR.mkdir(parents=True, exist_ok=True)
+
 NASA_TAP_URL = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
 GAIA_TAP_URL = "https://gea.esac.esa.int/tap-server/tap/sync"
 SIMBAD_TAP_URL = "https://simbad.cds.unistra.fr/simbad/sim-tap/sync"
 
-NASA_CACHE = DATA_DIR / "nasa_ps.csv"
-GAIA_CACHE = DATA_DIR / "gaia_stellar.csv"
-SIMBAD_CACHE = DATA_DIR / "simbad_stellar.csv"
-HEC_FILE = DATA_DIR / "hwc.csv"
-OUTPUT_FILE = DATA_DIR / "consolidated_exoplanets.csv"
+NASA_CACHE = RAW_DIR / "nasa_ps.csv"
+GAIA_CACHE = RAW_DIR / "gaia_stellar.csv"
+SIMBAD_CACHE = RAW_DIR / "simbad_stellar.csv"
+HEC_FILE = RAW_DIR / "hwc.csv"
+OUTPUT_FILE = INPUT_DIR / "consolidated_exoplanets.csv"
 
 # Physical constants (SI)
 G_SI = 6.674e-11          # m^3 kg^-1 s^-2
