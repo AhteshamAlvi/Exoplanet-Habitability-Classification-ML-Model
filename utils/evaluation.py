@@ -2,18 +2,20 @@
 evaluation.py — Metrics for the exoplanet ML pipeline.
 
 `run_seed_sweep` is the workhorse: trains a fresh model on each of N random
-train/test splits using fixed hyperparameters, then captures per-seed F1,
-precision, recall, accuracy, balanced accuracy, MCC, minority-F1-macro, plus
-the confusion matrix, predictions, and (when available) feature importances.
+train/test splits using fixed hyperparameters, then captures per-seed metrics
+plus optional artifacts (predictions, predict_proba, confusion matrices,
+feature importances, loss curves, n_iter values) for downstream aggregation.
 
 The result is a SweepResult, consumed by:
-  - print_sweep_classification_report  : per-class F1 table (this file)
+  - print_sweep_classification_report  : per-class F1 table
   - print_sweep_performance_summary    : per-class P/R + aggregate robustness
                                          metrics, sized for cross-model judging
   - print_sweep_error_patterns         : off-diagonal CM cells, aggregated
   - plot_sweep_f1_bar                  : per-class bar chart with error bars
   - plot_sweep_confusion_matrix        : averaged normalized CM with per-cell std
   - plot_sweep_feature_importances     : mean ± std importance per feature
+  - plot_sweep_posterior_violins       : aggregated predict_proba distributions
+  - plot_sweep_loss_curves             : overlaid training loss curves
 
 Single-split helper kept here:
   - run_stratified_cv : within-seed CV stability check, orthogonal to sweep
@@ -61,27 +63,15 @@ def run_stratified_cv(model, X_train, y_train, n_splits=5):
 class SweepResult:
     """Captures all artifacts produced by run_seed_sweep.
 
-    Attributes
-    ----------
-    df : pandas.DataFrame
-        One row per seed. Columns:
-          seed,
-          f1_macro, f1_weighted, f1_nonhab, f1_meso, f1_psychro,
-          prec_macro, prec_weighted, prec_nonhab, prec_meso, prec_psychro,
-          recall_macro, recall_weighted, recall_nonhab, recall_meso, recall_psychro,
-          accuracy, balanced_acc, mcc, minority_f1_macro.
-    cms : list of np.ndarray
-        Count confusion matrices (3,3, int) per seed, ordered by classes
-        [Non-Habitable, Mesoplanet, Psychroplanet].
-    y_test_per_seed, y_pred_per_seed : list of np.ndarray
-        Per-seed held-out labels and model predictions.
-    feature_importances : list of np.ndarray, or None
-        Per-seed feature_importances_ vectors, when the estimator exposes it.
-        None for models without the attribute.
-    feature_names : list of str
-        Column names corresponding to importance vectors.
-    model_name : str
-        Label used in printouts and plot titles.
+    Always-present attributes:
+      df, cms, y_test_per_seed, y_pred_per_seed, feature_names, model_name
+
+    Optional captures (None when the estimator doesn't expose the underlying
+    sklearn attribute):
+      feature_importances : per-seed feature_importances_ vectors
+      y_prob_per_seed     : per-seed predict_proba arrays
+      loss_curves         : per-seed loss_curve_ lists (MLP, gradient-boosted)
+      n_iters             : per-seed n_iter_ values
     """
     df: pd.DataFrame
     cms: List[np.ndarray] = field(default_factory=list)
@@ -90,10 +80,26 @@ class SweepResult:
     feature_importances: Optional[List[np.ndarray]] = None
     feature_names: List[str] = field(default_factory=list)
     model_name: str = "model"
+    # Newer optional captures — defaults preserved for old pickles via __setstate__
+    y_prob_per_seed: Optional[List[np.ndarray]] = None
+    loss_curves: Optional[List[np.ndarray]] = None
+    n_iters: Optional[List[int]] = None
+    coefs: Optional[List[np.ndarray]] = None
+    y_dec_per_seed: Optional[List[np.ndarray]] = None
 
     @property
     def n_seeds(self) -> int:
         return len(self.df)
+
+    def __setstate__(self, state):
+        """Defensive unpickling: older pickles may predate any of the newer
+        optional capture fields. Fill missing ones with None so attribute
+        access doesn't AttributeError.
+        """
+        for fname in ("y_prob_per_seed", "loss_curves", "n_iters",
+                      "coefs", "y_dec_per_seed"):
+            state.setdefault(fname, None)
+        self.__dict__.update(state)
 
 
 def _resolve_sweep_path(path):
@@ -106,6 +112,28 @@ def _resolve_sweep_path(path):
     return SWEEP_DIR / p
 
 
+def _try_predict_proba(est, X):
+    """Return predict_proba(X) when available, else None. Silent fallback so
+    SVMs/LDA without probability=True don't break the sweep loop.
+    """
+    if not hasattr(est, "predict_proba"):
+        return None
+    try:
+        return np.asarray(est.predict_proba(X))
+    except Exception:
+        return None
+
+
+def _try_decision_function(est, X):
+    """Return decision_function(X) when available, else None."""
+    if not hasattr(est, "decision_function"):
+        return None
+    try:
+        return np.asarray(est.decision_function(X))
+    except Exception:
+        return None
+
+
 def run_seed_sweep(model_factory, df, *, n_seeds=50, scaler_cls=None,
                    features=None, smote_variant="standard",
                    model_name="model", verbose=True,
@@ -115,7 +143,8 @@ def run_seed_sweep(model_factory, df, *, n_seeds=50, scaler_cls=None,
     Fits a fresh model per seed via `model_factory(class_weight_dict)`, records
     F1/precision/recall (per-class, macro, weighted), accuracy, balanced
     accuracy, MCC, minority-F1-macro, plus the confusion matrix, predictions,
-    and (when available) feature importances. Returns a SweepResult.
+    and any of {predict_proba, feature_importances_, loss_curve_, n_iter_}
+    that the estimator exposes. Returns a SweepResult.
 
     Save paths: a bare filename for `save_csv` / `save_pickle` lands in
     `data/output/seed_sweep_results/`. Pass an absolute path or one with
@@ -152,9 +181,21 @@ def run_seed_sweep(model_factory, df, *, n_seeds=50, scaler_cls=None,
     cms = []
     y_test_per_seed = []
     y_pred_per_seed = []
+    y_prob_per_seed = []
+    y_dec_per_seed = []
     importances_per_seed = []
+    coefs = []
+    loss_curves = []
+    n_iters = []
     feature_names = None
+
+    # Flags decided on first seed, used for all subsequent
     has_importances = None
+    has_proba = None
+    has_dec = None
+    has_coef = None
+    has_loss_curve = None
+    has_n_iter = None
 
     for seed in range(n_seeds):
         kwargs = {"scaler": scaler_cls(), "smote_variant": smote_variant,
@@ -170,7 +211,7 @@ def run_seed_sweep(model_factory, df, *, n_seeds=50, scaler_cls=None,
         est.fit(X_tr, y_tr)
         y_pred = est.predict(X_te)
 
-        # Per-class, macro, and weighted P/R/F1 in three calls
+        # Per-class, macro, and weighted P/R/F1
         p_per, r_per, f_per, _ = precision_recall_fscore_support(
             y_te, y_pred, labels=classes, average=None, zero_division=0,
         )
@@ -208,10 +249,57 @@ def run_seed_sweep(model_factory, df, *, n_seeds=50, scaler_cls=None,
         y_test_per_seed.append(np.asarray(y_te))
         y_pred_per_seed.append(np.asarray(y_pred))
 
+        # Optional captures — decided on first seed, then consistent across the loop
         if has_importances is None:
             has_importances = hasattr(est, "feature_importances_")
         if has_importances:
             importances_per_seed.append(np.asarray(est.feature_importances_))
+
+        if has_proba is None:
+            probe = _try_predict_proba(est, X_te[:1])  # cheap availability check
+            has_proba = probe is not None
+        if has_proba:
+            y_prob_per_seed.append(np.asarray(est.predict_proba(X_te)))
+
+        if has_dec is None:
+            probe = _try_decision_function(est, X_te[:1])
+            has_dec = probe is not None
+        if has_dec:
+            y_dec_per_seed.append(np.asarray(est.decision_function(X_te)))
+
+        if has_coef is None:
+            # Some models expose coef_ but only after .fit (already done above).
+            # Still guard with a try in case the array is malformed.
+            if hasattr(est, "coef_"):
+                try:
+                    np.asarray(est.coef_)
+                    has_coef = True
+                except Exception:
+                    has_coef = False
+            else:
+                has_coef = False
+        if has_coef:
+            coefs.append(np.asarray(est.coef_))
+
+        if has_loss_curve is None:
+            has_loss_curve = hasattr(est, "loss_curve_")
+        if has_loss_curve:
+            loss_curves.append(np.asarray(est.loss_curve_))
+
+        if has_n_iter is None:
+            # Some models (SVC, multinomial LogReg) expose n_iter_ as an array
+            # per binary sub-problem; that's not meaningful as a single
+            # convergence-step count, so only capture scalar n_iter_.
+            if hasattr(est, "n_iter_"):
+                try:
+                    int(est.n_iter_)
+                    has_n_iter = True
+                except (TypeError, ValueError):
+                    has_n_iter = False
+            else:
+                has_n_iter = False
+        if has_n_iter:
+            n_iters.append(int(est.n_iter_))
 
     sweep_df = pd.DataFrame(rows)
     result = SweepResult(
@@ -222,6 +310,11 @@ def run_seed_sweep(model_factory, df, *, n_seeds=50, scaler_cls=None,
         feature_importances=importances_per_seed if has_importances else None,
         feature_names=feature_names or [],
         model_name=model_name,
+        y_prob_per_seed=y_prob_per_seed if has_proba else None,
+        loss_curves=loss_curves if has_loss_curve else None,
+        n_iters=n_iters if has_n_iter else None,
+        coefs=coefs if has_coef else None,
+        y_dec_per_seed=y_dec_per_seed if has_dec else None,
     )
 
     if verbose:
@@ -233,8 +326,15 @@ def run_seed_sweep(model_factory, df, *, n_seeds=50, scaler_cls=None,
               f"max {sweep_df['f1_macro'].max():.4f})")
         print(f"  F1 weighted: {sweep_df['f1_weighted'].mean():.4f} "
               f"± {sweep_df['f1_weighted'].std():.4f}")
-        if has_importances:
-            print(f"  Captured feature importances for {len(importances_per_seed)} seeds.")
+        captured = []
+        if has_importances: captured.append("feature_importances")
+        if has_proba:       captured.append("predict_proba")
+        if has_dec:         captured.append("decision_function")
+        if has_coef:        captured.append("coef_")
+        if has_loss_curve:  captured.append("loss_curve")
+        if has_n_iter:      captured.append("n_iter")
+        if captured:
+            print(f"  Captured per-seed: {', '.join(captured)}")
 
     if save_csv is not None:
         path = _resolve_sweep_path(save_csv)

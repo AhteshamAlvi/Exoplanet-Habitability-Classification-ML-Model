@@ -15,4 +15,8 @@ from .plots import (
     plot_sweep_f1_bar,
     plot_sweep_confusion_matrix,
     plot_sweep_feature_importances,
+    plot_sweep_posterior_violins,
+    plot_sweep_loss_curves,
+    plot_sweep_linear_coefficients,
+    plot_sweep_decision_scores,
 )
